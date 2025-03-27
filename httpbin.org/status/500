@@ -1,0 +1,9 @@
+HTTP/1.1 500 INTERNAL SERVER ERROR
+Date: Thu, 27 Mar 2025 07:54:06 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 0
+Connection: keep-alive
+Server: gunicorn/19.9.0
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+
