@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+Server: nginx/1.10.3 (Ubuntu)
+Date: Thu, 27 Mar 2025 08:08:34 GMT
+Content-Type: image/png
+Content-Length: 3858
+Last-Modified: Tue, 17 May 2022 16:17:37 GMT
+Connection: keep-alive
+ETag: "6283caa1-f12"
+Cache-Control: no-store
+Accept-Ranges: bytes
+
