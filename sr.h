@@ -2,7 +2,6 @@
 #ifndef SR_H
 #define SR_H
 
-#include "emulator.h"
 
 /* Debug Variables */
 extern int TRACE;
