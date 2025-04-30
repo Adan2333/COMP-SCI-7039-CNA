@@ -194,8 +194,8 @@ void A_input(struct pkt packet)
             queue_front = (queue_front + 1) % MAX_QUEUE_SIZE;
             queue_size--;
 
-            //if (TRACE > 0)
-                //printf("----A: Sending queued message to layer3.\n");
+            /*if (TRACE > 0)
+                printf("----A: Sending queued message to layer3.\n");*/
             A_output(next_message); 
           }
         
