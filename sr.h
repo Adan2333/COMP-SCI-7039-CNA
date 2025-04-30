@@ -27,4 +27,6 @@ extern int window_full;
 extern int total_ACKs_received;
 extern int new_ACKs;
 
+#ifndef BIDIRECTIONAL
+#define BIDIRECTIONAL 0
 #endif

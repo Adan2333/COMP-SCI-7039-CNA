@@ -353,6 +353,3 @@ void B_timerinterrupt(void)
 {
 }
 
-#ifndef BIDIRECTIONAL
-#define BIDIRECTIONAL 0
-#endif
