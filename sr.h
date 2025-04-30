@@ -30,3 +30,5 @@ extern int new_ACKs;
 #ifndef BIDIRECTIONAL
 #define BIDIRECTIONAL 0
 #endif
+
+#endif /* SR_H */
