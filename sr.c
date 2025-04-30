@@ -178,6 +178,7 @@ void A_input(struct pkt packet)
           if (pos == windowfirst) {
             /* Slide window past all consecutively ACKed packets */
             while (windowcount > 0 && acked[windowfirst]) {
+              acked[windowfirst] = false; 
               windowfirst = (windowfirst + 1) % WINDOWSIZE;
               windowcount--;
             }
@@ -226,6 +227,7 @@ void A_timerinterrupt(void)
     packets_resent++;
     
     /* Restart timer */
+    stoptimer(A);
     starttimer(A, RTT);
     
     /* For SR, we should move to the next unACKed packet */
@@ -289,7 +291,7 @@ void B_input(struct pkt packet)
     if (packet.seqnum >= rcv_base) {
       offset = packet.seqnum - rcv_base;
     } else {
-      offset = SEQSPACE - rcv_base + packet.seqnum;
+      offset = (packet.seqnum - rcv_base + SEQSPACE) % SEQSPACE;
     }
     
     /* Check if the packet is within the window */
