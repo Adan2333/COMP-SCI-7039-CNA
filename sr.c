@@ -123,8 +123,8 @@ void A_output(struct msg message)
         queue_rear = (queue_rear + 1) % MAX_QUEUE_SIZE;
         queue_size++;
     } else {
-        //if (TRACE > 0)
-            //printf("----A: Message queue is full, dropping message.\n");
+        /*if (TRACE > 0)
+            printf("----A: Message queue is full, dropping message.\n");*/
       }
 
     window_full++;
@@ -201,7 +201,8 @@ void A_input(struct pkt packet)
         
         }else {
           if (TRACE > 0)
-            printf(packet.acknum);
+          printf("%d\n", packet.acknum);
+
         }
       }
     }
@@ -351,7 +352,7 @@ void B_input(struct pkt packet)
   sendpkt.checksum = ComputeChecksum(sendpkt); 
 
   /* send out packet */
-  //if (TRACE > 0)
+  /*if (TRACE > 0)*/
     
   tolayer3(B, sendpkt);
 }
