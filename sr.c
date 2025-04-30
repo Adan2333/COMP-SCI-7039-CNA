@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include "emulator.h"
 #include "sr.h"
+#include <string.h>
+
+
 
 /* ******************************************************************
    Selective Repeat protocol.  Adapted from J.F.Kurose
@@ -26,6 +29,13 @@
 #define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
 #define SEQSPACE 12     /* the sequence space for SR must be at least 2*windowsize */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
+
+#define MAX_QUEUE_SIZE 50 
+
+static struct msg message_queue[MAX_QUEUE_SIZE]; 
+static int queue_front = 0; 
+static int queue_rear = 0;  
+static int queue_size = 0;  
 
 /* SR protocol requires sequence space to be at least twice the window size */
 #if SEQSPACE < 2*WINDOWSIZE
@@ -102,10 +112,22 @@ void A_output(struct msg message)
     /* get next sequence number, wrap back to 0 */
     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;  
   }
-  /* if blocked, window is full */
+
+/* if blocked, window is full */
   else {
     if (TRACE > 0)
-      printf("----A: New message arrives, send window is full\n");
+        printf("----A: New message arrives, send window is full. Message is queued.\n");
+
+    /* Cache the message in the queue */
+    if (queue_size < MAX_QUEUE_SIZE) {
+        message_queue[queue_rear] = message;
+        queue_rear = (queue_rear + 1) % MAX_QUEUE_SIZE;
+        queue_size++;
+    } else {
+        if (TRACE > 0)
+            printf("----A: Message queue is full, dropping message.\n");
+    }
+
     window_full++;
   }
 }
@@ -167,8 +189,17 @@ void A_input(struct pkt packet)
               timer_for_pkt = windowfirst;
             }
           }
-        }
-        else {
+          while (queue_size > 0 && windowcount < WINDOWSIZE) {
+            struct msg next_message = message_queue[queue_front];
+            queue_front = (queue_front + 1) % MAX_QUEUE_SIZE;
+            queue_size--;
+
+            if (TRACE > 0)
+                printf("----A: Sending queued message to layer3.\n");
+            A_output(next_message); 
+          }
+        
+        }else {
           if (TRACE > 0)
             printf("----A: duplicate ACK %d received, do nothing\n", packet.acknum);
         }
