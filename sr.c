@@ -116,7 +116,7 @@ void A_output(struct msg message)
 */
 void A_input(struct pkt packet)
 {
-  int i, pos;
+  int pos;
 
   /* if received ACK is not corrupted */ 
   if (!IsCorrupted(packet)) {
@@ -184,6 +184,8 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt(void)
 {
+  int next_pkt;
+  int count;
   if (TRACE > 0)
     printf("----A: time out for packet %d, resend packet!\n", buffer[timer_for_pkt].seqnum);
 
@@ -196,8 +198,8 @@ void A_timerinterrupt(void)
     starttimer(A, RTT);
     
     /* For SR, we should move to the next unACKed packet */
-    int next_pkt = (timer_for_pkt + 1) % WINDOWSIZE;
-    int count = 0;
+    next_pkt = (timer_for_pkt + 1) % WINDOWSIZE;
+    count = 0;
     /* Find the next unACKed packet to set timer for */
     while (count < windowcount && acked[next_pkt]) {
       next_pkt = (next_pkt + 1) % WINDOWSIZE;
@@ -217,6 +219,7 @@ void A_timerinterrupt(void)
 /* entity A routines are called. You can use it to do any initialization */
 void A_init(void)
 {
+  int i;
   /* initialise A's window, buffer and sequence number */
   A_nextseqnum = 0;  /* A starts with seq num 0, do not change this */
   windowfirst = 0;
@@ -228,7 +231,6 @@ void A_init(void)
   timer_for_pkt = 0;
   
   /* Initialize the acked array */
-  int i;
   for (i = 0; i < WINDOWSIZE; i++) {
     acked[i] = false;
   }
@@ -247,12 +249,12 @@ static bool received[WINDOWSIZE]; /* tracks which packets in the window have bee
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
-  int i, pos;
+  int i, pos,offset;
 
   /* if not corrupted and within receiver's window */
   if (!IsCorrupted(packet)) {
     /* Calculate where this packet belongs in the window */
-    int offset;
+
     if (packet.seqnum >= rcv_base) {
       offset = packet.seqnum - rcv_base;
     } else {
@@ -326,12 +328,12 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
+  int i;
   expectedseqnum = 0;
   B_nextseqnum = 1;
   rcv_base = 0;
   
   /* Initialize the received array */
-  int i;
   for (i = 0; i < WINDOWSIZE; i++) {
     received[i] = false;
   }
@@ -350,3 +352,7 @@ void B_output(struct msg message)
 void B_timerinterrupt(void)
 {
 }
+
+#ifndef BIDIRECTIONAL
+#define BIDIRECTIONAL 0
+#endif
