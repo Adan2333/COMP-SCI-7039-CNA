@@ -262,17 +262,21 @@ void B_input(struct pkt packet)
   /* if not corrupted and sequence number is within the receiver window */
   if (!IsCorrupted(packet)) {
     seqnum = packet.seqnum;
-    /* Calculate if the seqnum is within our window (rcv_base to rcv_base+WINDOWSIZE-1) */
-    if (seqnum >= rcv_base)
-      relativeSeq = seqnum - rcv_base;
-    else
-      relativeSeq = SEQSPACE - rcv_base + seqnum;
     
-    if (relativeSeq < WINDOWSIZE) {
+    /* Calculate if the seqnum is within our window (rcv_base to rcv_base+WINDOWSIZE-1) */
+    /* Handle sequence number wraparound correctly */
+    if ((rcv_base <= seqnum && seqnum < rcv_base + WINDOWSIZE) || 
+        (rcv_base + WINDOWSIZE >= SEQSPACE && seqnum < (rcv_base + WINDOWSIZE) % SEQSPACE)) {
       /* Packet is within our window */
       if (TRACE > 0)
         printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
       packets_received++;
+      
+      /* Calculate the buffer index properly considering wraparound */
+      if (seqnum >= rcv_base)
+        relativeSeq = seqnum - rcv_base;
+      else
+        relativeSeq = SEQSPACE - rcv_base + seqnum;
       
       /* Buffer the packet and mark as received */
       bufferIndex = relativeSeq;
@@ -293,7 +297,7 @@ void B_input(struct pkt packet)
         
         /* Check if we have any consecutive packets already buffered */
         next = 1;
-        while (received[next]) {
+        while (next < WINDOWSIZE && received[next]) {
           /* Deliver this buffered packet */
           tolayer5(B, rcv_buffer[next].payload);
           
@@ -301,7 +305,7 @@ void B_input(struct pkt packet)
           received[next] = false;
           expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
           rcv_base = expectedseqnum;
-          next = (next + 1) % WINDOWSIZE;
+          next++;
         }
         
         /* Shift the received array */
