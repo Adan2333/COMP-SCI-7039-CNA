@@ -21,12 +21,20 @@
    - removed bidirectional GBN code and other code not used by prac. 
    - fixed C style to adhere to current programming style
    - added SR implementation
+   - added SACK implementation
 **********************************************************************/
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
 #define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
 #define SEQSPACE 12     /* the sequence space for SR must be at least 2*windowsize */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
+#define MAX_SACK 6      /* Maximum number of packets that can be SACKed in one ACK */
+
+/* SACK structure to hold multiple ACKs */
+struct sack_info {
+    int count;                  /* Number of packets being SACKed */
+    int seqnums[MAX_SACK];      /* Array of sequence numbers being SACKed */
+};
 
 /* generic procedure to compute the checksum of a packet.  Used by both sender and receiver  
    the simulator will overwrite part of your packet with 'z's.  It will not overwrite your 
@@ -54,6 +62,60 @@ bool IsCorrupted(struct pkt packet)
     return (true);
 }
 
+/* Functions to encode and decode SACK information in the packet payload */
+void EncodeSACK(struct pkt *packet, struct sack_info sack)
+{
+    char sackData[20]; /* Buffer to store SACK encoding */
+    int i;
+    
+    /* Format: First byte is count, followed by sequence numbers */
+    sackData[0] = '0' + sack.count; /* Convert count to character */
+    
+    /* Store each sequence number - we'll use 2 bytes per number for simplicity */
+    for (i = 0; i < sack.count && i < MAX_SACK; i++) {
+        sackData[1 + i*2] = '0' + (sack.seqnums[i] / 10); /* Tens digit */
+        sackData[2 + i*2] = '0' + (sack.seqnums[i] % 10); /* Ones digit */
+    }
+    
+    /* Fill the rest with '0' */
+    for (i = 1 + sack.count*2; i < 20; i++) {
+        sackData[i] = '0';
+    }
+    
+    /* Copy to packet payload */
+    memcpy(packet->payload, sackData, 20);
+}
+
+struct sack_info DecodeSACK(struct pkt packet)
+{
+    struct sack_info sack;
+    int i;
+    
+    /* Get count from first byte */
+    sack.count = packet.payload[0] - '0';
+    
+    /* Bounds check */
+    if (sack.count > MAX_SACK || sack.count < 0) {
+        sack.count = 0; /* Invalid SACK */
+        return sack;
+    }
+    
+    /* Extract each sequence number */
+    for (i = 0; i < sack.count; i++) {
+        int tens = packet.payload[1 + i*2] - '0';
+        int ones = packet.payload[2 + i*2] - '0';
+        
+        /* Validate digits */
+        if (tens < 0 || tens > 9 || ones < 0 || ones > 9) {
+            sack.count = 0; /* Invalid SACK format */
+            return sack;
+        }
+        
+        sack.seqnums[i] = tens * 10 + ones;
+    }
+    
+    return sack;
+}
 
 /********* Sender (A) variables and functions ************/
 
@@ -63,7 +125,7 @@ static int windowcount;                  /* the number of packets currently awai
 static int A_nextseqnum;                 /* the next sequence number to be used by the sender */
 static bool acked[WINDOWSIZE];           /* array to track which packets have been ACKed */
 static int timers[WINDOWSIZE];           /* array to track which packet's timer is running */
-static int timer_running;                /* 添加：标记是否有计时器正在运行 */
+static int timer_running;                /* Track if any timer is running */
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
@@ -113,16 +175,17 @@ void A_output(struct msg message)
   }
 }
 
-
 /* called from layer 3, when a packet arrives for layer 4 
    In this practical this will always be an ACK as B never sends data.
 */
 void A_input(struct pkt packet)
 {
-  int i;
+  int i, j;
   int bufferIndex = -1;
   int idx;
   int next_timer_idx = -1;
+  struct sack_info sack;
+  bool window_updated = false;
 
   /* if received ACK is not corrupted */ 
   if (!IsCorrupted(packet)) {
@@ -130,6 +193,10 @@ void A_input(struct pkt packet)
       printf("----A: uncorrupted ACK %d is received\n", packet.acknum);
     total_ACKs_received++;
 
+    /* Decode SACK information */
+    sack = DecodeSACK(packet);
+    
+    /* Process primary ACK (packet.acknum) */
     /* find which packet in our buffer this ACK corresponds to */
     for(i = 0; i < windowcount; i++) {
       idx = (windowfirst + i) % WINDOWSIZE;
@@ -152,12 +219,53 @@ void A_input(struct pkt packet)
         timer_running = 0;
         timers[bufferIndex] = NOTINUSE;
       }
-
+      
+      window_updated = true;
+    }
+    else {
+      if (TRACE > 0)
+        printf ("----A: duplicate ACK received, checking SACK info!\n");
+    }
+    
+    /* Process SACK information */
+    for (i = 0; i < sack.count; i++) {
+      /* find which packet in our buffer this SACK corresponds to */
+      bufferIndex = -1;
+      for(j = 0; j < windowcount; j++) {
+        idx = (windowfirst + j) % WINDOWSIZE;
+        if(buffer[idx].seqnum == sack.seqnums[i] && !acked[idx]) {
+          bufferIndex = idx;
+          break;
+        }
+      }
+      
+      /* if SACK is for a packet in our window and not already ACKed */
+      if (bufferIndex != -1) {
+        if (TRACE > 0)
+          printf("----A: SACK for packet %d received\n", sack.seqnums[i]);
+        
+        /* mark this packet as acknowledged */
+        acked[bufferIndex] = true;
+        if (timers[bufferIndex] != NOTINUSE) {
+          stoptimer(A);
+          timer_running = 0;
+          timers[bufferIndex] = NOTINUSE;
+        }
+        
+        window_updated = true;
+        new_ACKs++; /* Count SACK as new ACK for statistics */
+      }
+    }
+    
+    /* If window was updated by any ACK or SACK, try to slide window */
+    if (window_updated) {
       /* try to slide window if the first packet is ACKed */
       while (windowcount > 0 && acked[windowfirst]) {
         windowfirst = (windowfirst + 1) % WINDOWSIZE;
         windowcount--;
       }
+      
+      /* Start timer for the first unacked packet if needed */
       if (!timer_running && windowcount > 0) {
         for (i = 0; i < windowcount; i++) {
           idx = (windowfirst + i) % WINDOWSIZE;
@@ -167,16 +275,11 @@ void A_input(struct pkt packet)
           }
         }
         
-
         if (next_timer_idx != -1) {
           starttimer(A, RTT);
           timer_running = 1;
         }
       }
-    }
-    else {
-      if (TRACE > 0)
-        printf ("----A: duplicate ACK received, do nothing!\n");
     }
   }
   else {
@@ -205,7 +308,7 @@ void A_timerinterrupt(void)
     }
   }
   
-  /* not sure ,resend */
+  /* not sure, resend */
   if (first_unacked != -1) {
     if (TRACE > 0)
       printf ("---A: resending packet %d\n", buffer[first_unacked].seqnum);
@@ -232,7 +335,7 @@ void A_init(void)
                      so initially this is set to -1
                    */
   windowcount = 0;
-  timer_running = 0; /* 初始化timer_running为0（没有计时器运行）*/
+  timer_running = 0; /* Initialize timer_running to 0 (no timer running) */
   
   /* Initialize acked and timers arrays */
   for (i = 0; i < WINDOWSIZE; i++) {
@@ -258,6 +361,10 @@ void B_input(struct pkt packet)
   int seqnum;
   int relativeSeq;
   int next;
+  struct sack_info sack;
+
+  /* Initialize SACK info */
+  sack.count = 0;
 
   /* if not corrupted and sequence number is within the receiver window */
   if (!IsCorrupted(packet)) {
@@ -316,26 +423,53 @@ void B_input(struct pkt packet)
           received[i] = false;
         }
       }
+      
+      /* Prepare SACK information - include all received but not yet delivered packets */
+      sack.count = 0;
+      for (i = 0; i < WINDOWSIZE; i++) {
+        if (received[i] && ((rcv_base + i) % SEQSPACE != seqnum)) {
+          /* Add to SACK list if different from primary ACK */
+          sack.seqnums[sack.count++] = (rcv_base + i) % SEQSPACE;
+          if (sack.count >= MAX_SACK) break;
+        }
+      }
     } else {
       /* Packet is outside our window, but still send ACK if it's a duplicate */
       if (TRACE > 0) 
         printf("----B: packet out of window, resend ACK!\n");
       sendpkt.acknum = packet.seqnum;
+      
+      /* Still include SACK information */
+      sack.count = 0;
+      for (i = 0; i < WINDOWSIZE; i++) {
+        if (received[i]) {
+          sack.seqnums[sack.count++] = (rcv_base + i) % SEQSPACE;
+          if (sack.count >= MAX_SACK) break;
+        }
+      }
     }
   } else {
     /* packet is corrupted */
     if (TRACE > 0) 
       printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
     sendpkt.acknum = NOTINUSE;
+    
+    /* Still include SACK information even if primary ACK is not useful */
+    sack.count = 0;
+    for (i = 0; i < WINDOWSIZE; i++) {
+      if (received[i]) {
+        sack.seqnums[sack.count++] = (rcv_base + i) % SEQSPACE;
+        if (sack.count >= MAX_SACK) break;
+      }
+    }
   }
 
   /* create packet */
   sendpkt.seqnum = B_nextseqnum;
   B_nextseqnum = (B_nextseqnum + 1) % 2;
     
-  /* we don't have any data to send. fill payload with 0's */
-  for (i = 0; i < 20; i++) 
-    sendpkt.payload[i] = '0';  
+  /* Encode SACK information in payload */
+  EncodeSACK(&sendpkt, sack);
 
   /* computer checksum */
   sendpkt.checksum = ComputeChecksum(sendpkt); 
@@ -372,5 +506,4 @@ void B_output(struct msg message)
 /* called when B's timer goes off */
 void B_timerinterrupt(void)
 {
-
 }

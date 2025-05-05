@@ -26,6 +26,7 @@ extern int packets_received;
 extern int window_full;
 extern int total_ACKs_received;
 extern int new_ACKs;
+extern float time;
 
 #ifndef BIDIRECTIONAL
 #define BIDIRECTIONAL 0
