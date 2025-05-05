@@ -62,8 +62,8 @@ static int windowfirst, windowlast;      /* array indexes of the first/last pack
 static int windowcount;                  /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;                 /* the next sequence number to be used by the sender */
 static bool acked[WINDOWSIZE];           /* array to track which packets have been ACKed */
-static int timers[WINDOWSIZE];           /* array to track which packet's timer is running */
-static int timer_running;                /* 添加：标记是否有计时器正在运行 */
+static int current_timer_seq;            /* sequence number of packet currently being timed */
+static bool timer_running;               /* flag indicating if the timer is currently running */
 
 /* called from layer 5 (application layer), passed the message to be sent to other side */
 void A_output(struct msg message)
@@ -94,12 +94,13 @@ void A_output(struct msg message)
       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
     tolayer3 (A, sendpkt);
 
+    /* Start timer if not already running */
     if (!timer_running) {
-      timers[windowlast] = A_nextseqnum;
+      current_timer_seq = sendpkt.seqnum;
       starttimer(A, RTT);
-      timer_running = 1; 
-    } else {
-      timers[windowlast] = A_nextseqnum;
+      timer_running = 1;
+      if (TRACE > 0)
+        printf("----A: Starting timer for packet %d\n", current_timer_seq);
     }
 
     /* get next sequence number, wrap back to 0 */
@@ -122,7 +123,7 @@ void A_input(struct pkt packet)
   int i;
   int bufferIndex = -1;
   int idx;
-  int next_timer_idx = -1;
+  bool need_restart_timer = false;
 
   /* if received ACK is not corrupted */ 
   if (!IsCorrupted(packet)) {
@@ -147,10 +148,14 @@ void A_input(struct pkt packet)
 
       /* mark this packet as acknowledged */
       acked[bufferIndex] = true;
-      if (timers[bufferIndex] != NOTINUSE) {
+      
+      /* Check if the ACKed packet is the one currently being timed */
+      if (timer_running && buffer[bufferIndex].seqnum == current_timer_seq) {
+        if (TRACE > 0)
+          printf("----A: Stopping timer for ACKed packet %d\n", current_timer_seq);
         stoptimer(A);
         timer_running = 0;
-        timers[bufferIndex] = NOTINUSE;
+        need_restart_timer = true;
       }
 
       /* try to slide window if the first packet is ACKed */
@@ -158,19 +163,19 @@ void A_input(struct pkt packet)
         windowfirst = (windowfirst + 1) % WINDOWSIZE;
         windowcount--;
       }
-      if (!timer_running && windowcount > 0) {
+      
+      /* If we need to restart the timer or the timer isn't running, find next unacked packet */
+      if ((need_restart_timer || !timer_running) && windowcount > 0) {
         for (i = 0; i < windowcount; i++) {
           idx = (windowfirst + i) % WINDOWSIZE;
           if (!acked[idx]) {
-            next_timer_idx = idx;
+            if (TRACE > 0)
+              printf("----A: Starting timer for next unacked packet %d\n", buffer[idx].seqnum);
+            current_timer_seq = buffer[idx].seqnum;
+            starttimer(A, RTT);
+            timer_running = 1;
             break;
           }
-        }
-        
-
-        if (next_timer_idx != -1) {
-          starttimer(A, RTT);
-          timer_running = 1;
         }
       }
     }
@@ -189,30 +194,53 @@ void A_input(struct pkt packet)
 void A_timerinterrupt(void)
 {
   int i;
-  int first_unacked = -1;
+  int next_unacked = -1;
+  int next_unacked_idx = -1;
 
   if (TRACE > 0)
-    printf("----A: time out,resend packets!\n");
+    printf("----A: time out for packet %d, resending it!\n", current_timer_seq);
 
   timer_running = 0;
 
+  /* Find the buffer index for the timed-out packet */
+  
   for(i = 0; i < windowcount; i++) {
     int idx = (windowfirst + i) % WINDOWSIZE;
-    
+    if (!acked[idx] && buffer[idx].seqnum == current_timer_seq) {
+      /* Resend this specific packet that timed out */
+      if (TRACE > 0)
+        printf ("---A: resending packet %d\n", buffer[idx].seqnum);
+      
+      tolayer3(A, buffer[idx]);
+      packets_resent++;
+      
+      /* Restart timer for this packet */
+      starttimer(A, RTT);
+      timer_running = 1;
+      /* Current timer sequence stays the same */
+      return;
+    }
+  }
+  
+  /* If we couldn't find the timed-out packet (it may have been ACKed and window moved),
+     find the next unACKed packet and start timer for it */
+  for(i = 0; i < windowcount; i++) {
+    int idx = (windowfirst + i) % WINDOWSIZE;
     if (!acked[idx]) {
-      first_unacked = idx;
+      next_unacked = buffer[idx].seqnum;
+      next_unacked_idx = idx;
       break;
     }
   }
   
-  /* not sure ,resend */
-  if (first_unacked != -1) {
+  if (next_unacked_idx != -1) {
     if (TRACE > 0)
-      printf ("---A: resending packet %d\n", buffer[first_unacked].seqnum);
+      printf ("---A: original packet already ACKed, resending next unacked packet %d\n", next_unacked);
     
-    tolayer3(A, buffer[first_unacked]);
+    tolayer3(A, buffer[next_unacked_idx]);
     packets_resent++;
     
+    current_timer_seq = next_unacked;
     starttimer(A, RTT);
     timer_running = 1;
   }
@@ -223,7 +251,6 @@ void A_timerinterrupt(void)
 void A_init(void)
 {
   int i;
-  
   /* initialise A's window, buffer and sequence number */
   A_nextseqnum = 0;  /* A starts with seq num 0, do not change this */
   windowfirst = 0;
@@ -232,12 +259,13 @@ void A_init(void)
                      so initially this is set to -1
                    */
   windowcount = 0;
-  timer_running = 0; /* 初始化timer_running为0（没有计时器运行）*/
+  timer_running = 0;
+  current_timer_seq = NOTINUSE;
   
-  /* Initialize acked and timers arrays */
+  /* Initialize acked array */
+ 
   for (i = 0; i < WINDOWSIZE; i++) {
     acked[i] = false;
-    timers[i] = NOTINUSE;
   }
 }
 
