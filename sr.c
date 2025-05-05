@@ -434,10 +434,27 @@ void B_input(struct pkt packet)
         }
       }
     } else {
-      /* Packet is outside our window, but still send ACK if it's a duplicate */
-      if (TRACE > 0) 
-        printf("----B: packet out of window, resend ACK!\n");
-      sendpkt.acknum = packet.seqnum;
+      bool is_old_packet = false;
+      
+      if (rcv_base > SEQSPACE/2) {
+        if (seqnum < rcv_base && seqnum > (rcv_base + WINDOWSIZE) % SEQSPACE) {
+          is_old_packet = true; 
+        }
+      } else {
+        if (seqnum < rcv_base) {
+          is_old_packet = true; 
+        }
+      }
+      
+      if (is_old_packet) {
+        if (TRACE > 0) 
+          printf("----B: old/duplicate packet %d received, send ACK\n", seqnum);
+        sendpkt.acknum = seqnum;  
+      } else {
+        if (TRACE > 0) 
+          printf("----B: future packet %d received, outside window\n", seqnum);
+        sendpkt.acknum = NOTINUSE;  
+      }
       
       /* Still include SACK information */
       sack.count = 0;
