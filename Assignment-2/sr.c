@@ -362,21 +362,37 @@ void B_input(struct pkt packet)
   int relativeSeq;
   int next;
   struct sack_info sack;
+  static int total_packets_received = 0; 
 
   /* Initialize SACK info */
   sack.count = 0;
 
   /* if not corrupted and sequence number is within the receiver window */
   if (!IsCorrupted(packet)) {
+    total_packets_received++;
     seqnum = packet.seqnum;
     
     /* Calculate if the seqnum is within our window (rcv_base to rcv_base+WINDOWSIZE-1) */
     /* Handle sequence number wraparound correctly */
     if ((rcv_base <= seqnum && seqnum < rcv_base + WINDOWSIZE) || 
         (rcv_base + WINDOWSIZE >= SEQSPACE && seqnum < (rcv_base + WINDOWSIZE) % SEQSPACE)) {
-      /* Packet is within our window */
-      if (TRACE > 0)
-        printf("----B: packet %d is correctly received, send ACK!\n", packet.seqnum);
+      if (seqnum >= rcv_base)
+        relativeSeq = seqnum - rcv_base;
+    else
+        relativeSeq = SEQSPACE - rcv_base + seqnum;
+    
+    bufferIndex = relativeSeq;
+    
+    
+    if (!received[bufferIndex]) {
+
+      unique_packets_received++;  
+      printf("----B: First time receiving packet %d\n", seqnum);
+    } else {
+      retransmitted_packets_received++;  
+      printf("----B: Received retransmission of packet %d\n", seqnum);
+    }
+  
       packets_received++;
       
       /* Calculate the buffer index properly considering wraparound */
@@ -453,7 +469,7 @@ void B_input(struct pkt packet)
       } else {
         if (TRACE > 0) 
           printf("----B: future packet %d received, outside window\n", seqnum);
-        sendpkt.acknum = NOTINUSE;  
+        sendpkt.acknum = NOTINUSE; 
       }
       
       /* Still include SACK information */
